@@ -11,6 +11,10 @@ import sys
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
+# global auth token
+TOKEN = ""
+
+
 # taken from http://stackoverflow.com/questions/25470844/specify-format-for-input-arguments-argparse-python#answer-25470943
 def valid_date(date_str):
     try:
@@ -19,26 +23,98 @@ def valid_date(date_str):
         msg = "Not a valid date: '{0}'.".format(date_str)
         raise argparse.ArgumentTypeError(msg)
 
-def get_created_date_for_tag(tag, repository, auth, args):
+
+def get_created_date_for_tag(tag, repository, args):
     headers = {'Accept': 'application/vnd.docker.distribution.manifest.v2+json'}
 
-    response = requests.get(args.registry_url + "/v2/" + repository + "/manifests/" + tag,
-                            auth=auth, verify=args.no_check_certificate, headers=headers)
+    response = get_repository_request(args.registry_url + "/v2/" + repository + "/manifests/" + tag, args, repository, headers)
 
     if response.json()['schemaVersion'] == 1:
         created_str = json.loads(response.json()['history'][0]['v1Compatibility'])['created'].split(".")[0]
     elif response.json()['schemaVersion'] == 2:
         digest = response.json()["config"]["digest"]
-        response = requests.get(args.registry_url + "/v2/" + repository + "/blobs/" + digest,
-                                auth=auth, verify=args.no_check_certificate, headers=headers)
+        response = get_repository_request(args.registry_url + "/v2/" + repository + "/blobs/" + digest, args, repository, headers)
         created_str = response.json()['created'].split(".")[0]
     return(datetime.strptime(created_str,DATE_FORMAT))
+
 
 def get_paginate_query(response):
     if 'Link' in response.headers:
         return response.headers['Link'].split('; ')[0][:-1][1:]
     else:
         return None
+
+
+# encapsulation of registry request to fork base vs token auth methods
+def get_registry_request(url, args, extra_headers = {}):
+
+    # token-url has been passed via cmdline, assuming token auth required to access catalog
+    if args.token_url:
+        # seems token hasnt been requested yet, gonna do so
+        global TOKEN
+        if TOKEN == "":
+            token_url = args.token_url + "&scope=registry:catalog:*"
+            print("retrieving new registry token from " + token_url)
+            if args.user and args.password:
+                auth = (args.user, args.password)
+            else:
+                auth = None
+            token_response = requests.get(token_url, auth=auth, verify=args.no_check_certificate)
+            TOKEN = token_response.json()["token"]
+            print("retreived registry token " + TOKEN)
+            # exit(1)
+        headers = {'Authorization': 'Bearer {}'.format(TOKEN)}
+        if extra_headers != {}:
+            headers = headers + extra_headers
+        # get response using TOKEN, auth None
+        response = requests.get(url, auth=None, verify=args.no_check_certificate, headers=headers)
+
+    # standard auth either using base user/pass auth or None
+    else:
+        # Get catalog
+        if args.user and args.password:
+            auth = (args.user, args.password)
+        else:
+            auth = None
+        response = requests.get(url, auth=auth, verify=args.no_check_certificate, headers=extra_headers)
+
+    return response
+
+
+# encapsulation of repository to fork base vs token auth methods
+def get_repository_request(url, args, repository, extra_headers = {}):
+
+    # add proper scope for this repo token
+    token_url = args.token_url + "&scope=repository:" + repository + ":*"
+
+    # token-url has been passed via cmdline, assuming token auth required to access catalog
+    if args.token_url:
+        # need to get token for this repo
+        print("retrieving token for repo " + repository + " from " + token_url)
+        if args.user and args.password:
+            auth = (args.user, args.password)
+        else:
+            auth = None
+        token_response = requests.get(token_url, auth=auth, verify=args.no_check_certificate)
+        repo_token = token_response.json()["token"]
+        print("retreived token " + repo_token)
+        headers = {'Authorization': 'Bearer {}'.format(repo_token)}
+        if extra_headers != {}:
+            headers = headers + extra_headers
+        # get response using repo_token, auth None
+        response = requests.get(url, auth=None, verify=args.no_check_certificate, headers=headers)
+
+    # standard auth either using base user/pass auth or None
+    else:
+        # Get catalog
+        if args.user and args.password:
+            auth = (args.user, args.password)
+        else:
+            auth = None
+        response = requests.get(url, auth=auth, verify=args.no_check_certificate, headers=extra_headers)
+
+    return response
+
 
 def main():
     """cli entrypoint"""
@@ -88,6 +164,10 @@ def main():
                         choices=['name', 'date'],
                         default='name',
                         help="Selects the order in which tags are sorted when the option '--last' is used")
+    parser.add_argument("--token-url",
+                        dest="token_url",
+                        help="URL for retrieving OAuth token used to access registry catalog and repositories. Pass without scope parameter.")
+    # user, pwd and cert nocheck used for both token and catalog retrieval, not very nice
     parser.add_argument("-U", "--user",
                         dest="user",
                         help="User for auth")
@@ -100,22 +180,20 @@ def main():
                         dest='dry_run',
                         action='store_true',
                         help="Dry run - show which tags would have been deleted but do not delete them")
+
     args = parser.parse_args()
 
-    # Get catalog
-    if args.user and args.password:
-        auth = (args.user, args.password)
-    else:
-        auth = None
-    response = requests.get(args.registry_url + "/v2/_catalog",
-                            auth=auth, verify=args.no_check_certificate)
+    response = get_registry_request(args.registry_url + "/v2/_catalog", args)
+
+    print(response)
 
     nextQuery = get_paginate_query(response)
     repositories = response.json()["repositories"]
 
+    print(repositories)
+
     while nextQuery is not None:
-        response = requests.get(args.registry_url + nextQuery,
-                                auth=auth, verify=args.no_check_certificate)
+        response = get_registry_request(args.registry_url + nextQuery, args)
         repositories.extend(response.json()['repositories'])
         nextQuery = get_paginate_query(response)
 
@@ -123,8 +201,9 @@ def main():
     for repository in repositories:
         if re.search(args.image, repository):
             # Get tags
-            response = requests.get(args.registry_url + "/v2/" + repository + "/tags/list",
-                                    auth=auth, verify=args.no_check_certificate)
+            response = get_repository_request(args.registry_url + "/v2/" + repository + "/tags/list", args, repository)
+
+            print(response)
 
             tags = None
             if "tags" in response.json().keys():
@@ -142,7 +221,7 @@ def main():
                 if args.order == 'name':
                     order_fn = lambda s: LooseVersion(re.sub('[^0-9.]', '9', s))
                 else:
-                    order_fn = lambda s: get_created_date_for_tag(s, repository, auth, args)
+                    order_fn = lambda s: get_created_date_for_tag(s, repository, args)
 
                 matching_tags.sort(key=order_fn)
 
@@ -160,7 +239,7 @@ def main():
                 tags_to_delete = []
                 if args.before or args.after:
                     for tag in matching_tags:
-                        created = get_created_date_for_tag(tag, repository, auth, args)
+                        created = get_created_date_for_tag(tag, repository, args)
 
                         if (not args.before or created < args.before) and (not args.after or created > args.after) :
                             tags_to_delete.append(tag)
