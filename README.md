@@ -1,5 +1,7 @@
 # delete-docker-registry-image
 
+This is an enhanced version of https://github.com/burnettk/delete-docker-registry-image with Gitlab OAuth2 bearer token authentication for your Docker Registry via Gitlab JWT OmniAuth provider. Ideal if you want to get your Gitlab Docker registry back in shape - fit and slim.  
+
 ## Install
 
     curl https://raw.githubusercontent.com/burnettk/delete-docker-registry-image/master/delete_docker_registry_image.py | sudo tee /usr/local/bin/delete_docker_registry_image >/dev/null
@@ -43,6 +45,10 @@ deletes only those having an image creation time between January 1, 2016 12 a.m.
 and June 25, 2016 12 p.m. (both datetimes are exclusive).
 
     ./clean_old_versions.py --image '^repo/sitor*' --include '^0.1.*' -l 2 -b 2016-06-25T12:00:00 -a 2016-01-01T00:00:00 --registry-url http://localhost:5000
+    
+Example with OAuth2 token authentication:    
+
+    ./clean_old_versions.py --image '^repo/sitor*' --include '^0.1.*' -l 2 -b 2016-06-25T12:00:00 -a 2016-01-01T00:00:00 --registry-url http://localhost:5000 --token-url "https://your-gitlab-installation.com/jwt/auth?service=container_registry" --user gitlab_username --password gitlab_password
 
 Add `--dry-run` as argument for a test run without actual removal of tags.
 
