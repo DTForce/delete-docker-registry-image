@@ -1,6 +1,6 @@
 # delete-docker-registry-image
 
-This is an enhanced version of https://github.com/burnettk/delete-docker-registry-image with Gitlab OAuth2 bearer token authentication for your Docker Registry via Gitlab JWT OmniAuth provider. Ideal if you want to get your Gitlab Docker registry back in shape - fit and slim.  
+This is an enhanced version of https://github.com/burnettk/delete-docker-registry-image with Docker Registry v2 Bearer token authentication as per https://docs.docker.com/registry/spec/auth/jwt/ e.g. via Gitlab JWT OmniAuth provider. Ideal if you want to get your Gitlab Docker registry back in shape - fit and slim.  
 
 ## Install
 
